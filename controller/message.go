@@ -9,6 +9,7 @@ import (
 	"github.com/taoshihan1991/imaptool/models"
 	"github.com/taoshihan1991/imaptool/tools"
 	"github.com/taoshihan1991/imaptool/ws"
+	"log"
 	"os"
 	"path"
 	"strconv"
@@ -127,7 +128,14 @@ func SendMessageV2(c *gin.Context) {
 		})
 		return
 	}
-
+	//限流
+	if !tools.LimitFreqSingle("sendmessage:"+c.ClientIP(), 1, 2) {
+		c.JSON(200, gin.H{
+			"code": 400,
+			"msg":  c.ClientIP() + "发送频率过快",
+		})
+		return
+	}
 	var kefuInfo models.User
 	var vistorInfo models.Visitor
 	if cType == "kefu" {
@@ -145,28 +153,14 @@ func SendMessageV2(c *gin.Context) {
 		})
 		return
 	}
+
 	models.CreateMessage(kefuInfo.Name, vistorInfo.VisitorId, content, cType)
 	var msg TypeMessage
 	if cType == "kefu" {
 		guest, ok := ws.ClientList[vistorInfo.VisitorId]
 
 		if guest != nil && ok {
-			conn := guest.Conn
-
-			msg = TypeMessage{
-				Type: "message",
-				Data: ws.ClientMessage{
-					Name:    kefuInfo.Nickname,
-					Avator:  kefuInfo.Avator,
-					Id:      kefuInfo.Name,
-					Time:    time.Now().Format("2006-01-02 15:04:05"),
-					ToId:    vistorInfo.VisitorId,
-					Content: content,
-					IsKefu:  "no",
-				},
-			}
-			str, _ := json.Marshal(msg)
-			conn.WriteMessage(websocket.TextMessage, str)
+			ws.VisitorMessage(vistorInfo.VisitorId, content, kefuInfo)
 		}
 
 		msg = TypeMessage{
@@ -208,12 +202,27 @@ func SendMessageV2(c *gin.Context) {
 		str, _ := json.Marshal(msg)
 		ws.OneKefuMessage(kefuInfo.Name, str)
 		go ws.SendServerJiang(vistorInfo.Name+"说", content, c.Request.Host)
+		go SendAppGetuiPush(kefuInfo.Name, vistorInfo.Name, content)
 	}
 	c.JSON(200, gin.H{
 		"code":   200,
 		"msg":    "ok",
 		"result": msg,
 	})
+	kefus, ok := ws.KefuList[kefuInfo.Name]
+	if !ok || len(kefus) == 0 {
+		log.Println("客服不在线,发送邮件通知")
+		go SendNoticeEmail(content+"|"+vistorInfo.Name, content)
+		go func() {
+			time.Sleep(1 * time.Second)
+			welcome := models.FindWelcomeByUserIdKey(kefuInfo.Name, "offline")
+			if welcome.Content == "" {
+				return
+			}
+			ws.VisitorMessage(vistorInfo.VisitorId, welcome.Content, kefuInfo)
+			models.CreateMessage(kefuInfo.Name, vistorInfo.VisitorId, welcome.Content, "kefu")
+		}()
+	}
 }
 func SendVisitorNotice(c *gin.Context) {
 	notice := c.Query("msg")
@@ -237,30 +246,6 @@ func SendVisitorNotice(c *gin.Context) {
 		"msg":  "ok",
 	})
 }
-func SendCloseMessage(c *gin.Context) {
-	visitorId := c.Query("visitor_id")
-	if visitorId == "" {
-		c.JSON(200, gin.H{
-			"code": 400,
-			"msg":  "visitor_id不能为空",
-		})
-		return
-	}
-	msg := TypeMessage{
-		Type: "close",
-		Data: visitorId,
-	}
-	str, _ := json.Marshal(msg)
-	for _, visitor := range clientList {
-		if visitorId == visitor.id {
-			visitor.conn.WriteMessage(websocket.TextMessage, str)
-		}
-	}
-	c.JSON(200, gin.H{
-		"code": 200,
-		"msg":  "ok",
-	})
-}
 func SendCloseMessageV2(c *gin.Context) {
 	visitorId := c.Query("visitor_id")
 	if visitorId == "" {
@@ -270,18 +255,18 @@ func SendCloseMessageV2(c *gin.Context) {
 		})
 		return
 	}
-	msg := TypeMessage{
-		Type: "close",
-		Data: visitorId,
-	}
-	str, _ := json.Marshal(msg)
-	for _, visitor := range ws.ClientList {
-		if visitorId == visitor.Id {
-			if err := visitor.Conn.WriteMessage(websocket.TextMessage, str); err != nil {
-				visitor.Conn.Close()
-				delete(ws.ClientList, visitorId)
-			}
+
+	oldUser, ok := ws.ClientList[visitorId]
+	if oldUser != nil || ok {
+		msg := TypeMessage{
+			Type: "close",
+			Data: visitorId,
 		}
+		str, _ := json.Marshal(msg)
+		err := oldUser.Conn.WriteMessage(websocket.TextMessage, str)
+		oldUser.Conn.Close()
+		delete(ws.ClientList, visitorId)
+		tools.Logger().Println("close_message", oldUser, err)
 	}
 	c.JSON(200, gin.H{
 		"code": 200,
@@ -374,10 +359,10 @@ func GetMessagesV2(c *gin.Context) {
 	messages := models.FindMessageByVisitorId(visitorId)
 	//result := make([]map[string]interface{}, 0)
 	chatMessages := make([]ChatMessage, 0)
+	var visitor models.Visitor
+	var kefu models.User
 	for _, message := range messages {
 		//item := make(map[string]interface{})
-		var visitor models.Visitor
-		var kefu models.User
 		if visitor.Name == "" || kefu.Name == "" {
 			kefu = models.FindUser(message.KefuId)
 			visitor = models.FindVisitorByVistorId(message.VisitorId)

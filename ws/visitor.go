@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/taoshihan1991/imaptool/models"
 	"log"
+	"time"
 )
 
 func NewVisitorServer(c *gin.Context) {
@@ -32,7 +33,7 @@ func NewVisitorServer(c *gin.Context) {
 		To_id:  vistorInfo.ToId,
 	}
 	go models.UpdateVisitorStatus(vistorInfo.VisitorId, 1)
-	go SendServerJiang(vistorInfo.Name, "来了", c.Request.Host)
+	//go SendServerJiang(vistorInfo.Name, "来了", c.Request.Host)
 
 	AddVisitorToList(user)
 
@@ -62,6 +63,18 @@ func NewVisitorServer(c *gin.Context) {
 }
 func AddVisitorToList(user *User) {
 	//用户id对应的连接
+	oldUser, ok := ClientList[user.Id]
+	if oldUser != nil || ok {
+		msg := TypeMessage{
+			Type: "close",
+			Data: user.Id,
+		}
+		str, _ := json.Marshal(msg)
+		if err := oldUser.Conn.WriteMessage(websocket.TextMessage, str); err != nil {
+			oldUser.Conn.Close()
+			delete(ClientList, user.Id)
+		}
+	}
 	ClientList[user.Id] = user
 	lastMessage := models.FindLastMessageByVisitorId(user.Id)
 	userInfo := make(map[string]string)
@@ -116,6 +129,23 @@ func VisitorNotice(visitorId string, notice string) {
 	msg := TypeMessage{
 		Type: "notice",
 		Data: notice,
+	}
+	str, _ := json.Marshal(msg)
+	visitor := ClientList[visitorId]
+	visitor.Conn.WriteMessage(websocket.TextMessage, str)
+}
+func VisitorMessage(visitorId, content string, kefuInfo models.User) {
+	msg := TypeMessage{
+		Type: "message",
+		Data: ClientMessage{
+			Name:    kefuInfo.Nickname,
+			Avator:  kefuInfo.Avator,
+			Id:      kefuInfo.Name,
+			Time:    time.Now().Format("2006-01-02 15:04:05"),
+			ToId:    visitorId,
+			Content: content,
+			IsKefu:  "no",
+		},
 	}
 	str, _ := json.Marshal(msg)
 	visitor := ClientList[visitorId]

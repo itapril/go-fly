@@ -4,67 +4,66 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/taoshihan1991/imaptool/config"
 	"github.com/taoshihan1991/imaptool/models"
 	"github.com/taoshihan1991/imaptool/tools"
 	"github.com/taoshihan1991/imaptool/ws"
-	"log"
 	"math/rand"
 	"strconv"
 )
 
-func PostVisitor(c *gin.Context) {
-	name := c.PostForm("name")
-	avator := c.PostForm("avator")
-	toId := c.PostForm("to_id")
-	id := c.PostForm("id")
-	refer := c.PostForm("refer")
-	city := c.PostForm("city")
-	client_ip := c.PostForm("client_ip")
-	if name == "" || avator == "" || toId == "" || id == "" || refer == "" || city == "" || client_ip == "" {
-		c.JSON(200, gin.H{
-			"code": 400,
-			"msg":  "error",
-		})
-		return
-	}
-	kefuInfo := models.FindUser(toId)
-	if kefuInfo.ID == 0 {
-		c.JSON(200, gin.H{
-			"code": 400,
-			"msg":  "用户不存在",
-		})
-		return
-	}
-	models.CreateVisitor(name, avator, c.ClientIP(), toId, id, refer, city, client_ip)
-
-	userInfo := make(map[string]string)
-	userInfo["uid"] = id
-	userInfo["username"] = name
-	userInfo["avator"] = avator
-	msg := TypeMessage{
-		Type: "userOnline",
-		Data: userInfo,
-	}
-	str, _ := json.Marshal(msg)
-	kefuConns := kefuList[toId]
-	if kefuConns != nil {
-		for k, kefuConn := range kefuConns {
-			log.Println(k, "xxxxxxxx")
-			kefuConn.WriteMessage(websocket.TextMessage, str)
-		}
-	}
-	c.JSON(200, gin.H{
-		"code": 200,
-		"msg":  "ok",
-	})
-}
+//func PostVisitor(c *gin.Context) {
+//	name := c.PostForm("name")
+//	avator := c.PostForm("avator")
+//	toId := c.PostForm("to_id")
+//	id := c.PostForm("id")
+//	refer := c.PostForm("refer")
+//	city := c.PostForm("city")
+//	client_ip := c.PostForm("client_ip")
+//	if name == "" || avator == "" || toId == "" || id == "" || refer == "" || city == "" || client_ip == "" {
+//		c.JSON(200, gin.H{
+//			"code": 400,
+//			"msg":  "error",
+//		})
+//		return
+//	}
+//	kefuInfo := models.FindUser(toId)
+//	if kefuInfo.ID == 0 {
+//		c.JSON(200, gin.H{
+//			"code": 400,
+//			"msg":  "用户不存在",
+//		})
+//		return
+//	}
+//	models.CreateVisitor(name, avator, c.ClientIP(), toId, id, refer, city, client_ip)
+//
+//	userInfo := make(map[string]string)
+//	userInfo["uid"] = id
+//	userInfo["username"] = name
+//	userInfo["avator"] = avator
+//	msg := TypeMessage{
+//		Type: "userOnline",
+//		Data: userInfo,
+//	}
+//	str, _ := json.Marshal(msg)
+//	kefuConns := kefuList[toId]
+//	if kefuConns != nil {
+//		for k, kefuConn := range kefuConns {
+//			log.Println(k, "xxxxxxxx")
+//			kefuConn.WriteMessage(websocket.TextMessage, str)
+//		}
+//	}
+//	c.JSON(200, gin.H{
+//		"code": 200,
+//		"msg":  "ok",
+//	})
+//}
 func PostVisitorLogin(c *gin.Context) {
 	ipcity := tools.ParseIp(c.ClientIP())
 	avator := fmt.Sprintf("/static/images/%d.jpg", rand.Intn(14))
 	toId := c.PostForm("to_id")
 	id := c.PostForm("visitor_id")
+
 	if id == "" {
 		id = tools.Uuid()
 	}
@@ -81,6 +80,21 @@ func PostVisitorLogin(c *gin.Context) {
 		name = "匿名网友"
 	}
 	client_ip := c.ClientIP()
+	extra := c.PostForm("extra")
+	extraJson := tools.Base64Decode(extra)
+	//log.Println(extra, extraJson, "aaaaaaaaaaaaa")
+	if extraJson != "" {
+		var extraObj VisitorExtra
+		err := json.Unmarshal([]byte(extraJson), &extraObj)
+		if err == nil {
+			if extraObj.VisitorName != "" {
+				name = extraObj.VisitorName
+			}
+			if extraObj.VisitorAvatar != "" {
+				avator = extraObj.VisitorAvatar
+			}
+		}
+	}
 	//log.Println(name,avator,c.ClientIP(),toId,id,refer,city,client_ip)
 	if name == "" || avator == "" || toId == "" || id == "" || refer == "" || city == "" || client_ip == "" {
 		c.JSON(200, gin.H{
@@ -97,8 +111,16 @@ func PostVisitorLogin(c *gin.Context) {
 		})
 		return
 	}
-	models.CreateVisitor(name, avator, c.ClientIP(), toId, id, refer, city, client_ip)
+	models.CreateVisitor(name, avator, c.ClientIP(), toId, id, refer, city, client_ip, extra)
 	visitor := models.FindVisitorByVistorId(id)
+
+	//各种通知
+	go SendNoticeEmail(visitor.Name, "来了")
+	go SendAppGetuiPush(kefuInfo.Name, visitor.Name, visitor.Name+"来了")
+	go SendVisitorLoginNotice(kefuInfo.Name, visitor.Name, visitor.Avator, visitor.Name+"来了")
+	go ws.VisitorOnline(kefuInfo.Name, visitor)
+	go SendServerJiang(visitor.Name, "来了", c.Request.Host)
+
 	c.JSON(200, gin.H{
 		"code":   200,
 		"msg":    "ok",
@@ -125,8 +147,12 @@ func GetVisitor(c *gin.Context) {
 // @Router /visitors [get]
 func GetVisitors(c *gin.Context) {
 	page, _ := strconv.Atoi(c.Query("page"))
+	pagesize, _ := strconv.Atoi(c.Query("pagesize"))
+	if pagesize == 0 {
+		pagesize = int(config.VisitorPageSize)
+	}
 	kefuId, _ := c.Get("kefu_name")
-	vistors := models.FindVisitorsByKefuId(uint(page), config.VisitorPageSize, kefuId.(string))
+	vistors := models.FindVisitorsByKefuId(uint(page), uint(pagesize), kefuId.(string))
 	count := models.CountVisitorsByKefuId(kefuId.(string))
 	c.JSON(200, gin.H{
 		"code": 200,
@@ -149,27 +175,24 @@ func GetVisitors(c *gin.Context) {
 // @Router /messages [get]
 func GetVisitorMessage(c *gin.Context) {
 	visitorId := c.Query("visitorId")
-	messages := models.FindMessageByVisitorId(visitorId)
+
+	query := "message.visitor_id= ?"
+	messages := models.FindMessageByWhere(query, visitorId)
 	result := make([]map[string]interface{}, 0)
 	for _, message := range messages {
 		item := make(map[string]interface{})
-		var visitor models.Visitor
-		var kefu models.User
-		if visitor.Name == "" || kefu.Name == "" {
-			kefu = models.FindUser(message.KefuId)
-			visitor = models.FindVisitorByVistorId(message.VisitorId)
-		}
+
 		item["time"] = message.CreatedAt.Format("2006-01-02 15:04:05")
 		item["content"] = message.Content
 		item["mes_type"] = message.MesType
-		item["visitor_name"] = visitor.Name
-		item["visitor_avator"] = visitor.Avator
-		item["kefu_name"] = kefu.Nickname
-		item["kefu_avator"] = kefu.Avator
+		item["visitor_name"] = message.VisitorName
+		item["visitor_avator"] = message.VisitorAvator
+		item["kefu_name"] = message.KefuName
+		item["kefu_avator"] = message.KefuAvator
 		result = append(result, item)
 
 	}
-	models.ReadMessageByVisitorId(visitorId)
+	go models.ReadMessageByVisitorId(visitorId)
 	c.JSON(200, gin.H{
 		"code":   200,
 		"msg":    "ok",

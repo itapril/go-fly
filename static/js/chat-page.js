@@ -4,22 +4,22 @@ new Vue({
     delimiters:["<{","}>"],
     data: {
         window:window,
-        //server:getWsBaseUrl()+"/chat_server",
         server:getWsBaseUrl()+"/ws_visitor",
         socket:null,
         msgList:[],
         messageContent:"",
-        chatTitle:"正在连接...",
+        chatTitle:GOFLY_LANG[LANG]['connecting'],
         visitor:{},
         face:[],
         showKfonline:false,
         socketClosed:false,
         timer:null,
         sendDisabled:false,
+        flyLang:GOFLY_LANG[LANG],
     },
     methods: {
         //初始化websocket
-        initConn() {
+        initConn:function() {
             let socket = new ReconnectingWebSocket(this.server+"?visitor_id="+this.visitor.visitor_id);//创建Socket实例
             socket.maxReconnectAttempts = 30;
             this.socket = socket
@@ -29,15 +29,12 @@ new Vue({
             //心跳
             this.ping();
         },
-        OnOpen() {
-            this.chatTitle="连接成功!"
-            // let mes = {}
-            // mes.type = "userInit";
-            // this.visitor.refer=REFER;
-            // mes.data = this.visitor;
-            // this.socket.send(JSON.stringify(mes));
+        OnOpen:function() {
+            this.chatTitle=GOFLY_LANG[LANG]['connectok'];
+            this.socketClosed=false;
         },
-        OnMessage(e) {
+        OnMessage:function(e) {
+            this.socketClosed=false;
             const redata = JSON.parse(e.data);
             if (redata.type == "kfOnline") {
                 let msg = redata.data
@@ -45,7 +42,7 @@ new Vue({
                     return;
                 }
                 this.visitor.to_id=msg.id;
-                this.chatTitle=msg.name+",正在与您沟通!"
+                this.chatTitle=msg.name+","+GOFLY_LANG[LANG]['chating'];
                 $(".chatBox").append("<div class=\"chatTime\">"+this.chatTitle+"</div>");
                 this.scrollBottom();
                 this.showKfonline=true;
@@ -66,36 +63,39 @@ new Vue({
                 let content = {}
                 content.avator = msg.avator;
                 content.name = msg.name;
-                content.content =replaceContent(msg.content,true);
+                content.content =replaceContent(msg.content);
                 content.is_kefu = false;
                 content.time = msg.time;
                 this.msgList.push(content);
 
-                //this.saveHistory(content);
+                notify(msg.name, {
+                    body: msg.content,
+                    icon: msg.avator
+                });
                 this.scrollBottom();
                 flashTitle();//标题闪烁
                 clearInterval(this.timer);
                 this.alertSound();//提示音
             }
             if (redata.type == "close") {
-                this.chatTitle="连接关闭!请重新打开页面";
+                this.chatTitle="系统关闭连接!请重新打开页面";
                 $(".chatBox").append("<div class=\"chatTime\">"+this.chatTitle+"</div>");
                 this.scrollBottom();
                 this.socket.close();
                 this.socketClosed=true;
             }
-            window.parent.postMessage(redata);
+            window.parent.postMessage(redata,"*");
         },
         //发送给客户
-        chatToUser() {
-            this.messageContent=this.messageContent.trim("\r\n");
-            if(this.messageContent==""||this.messageContent=="\r\n"){
-                this.$message({
-                    message: '不能发送空白信息',
-                    type: 'warning'
-                });
+        chatToUser:function() {
+            var messageContent=this.messageContent.trim("\r\n");
+            messageContent=messageContent.replace("\n","");
+            messageContent=messageContent.replace("\r\n","");
+            if(messageContent==""||messageContent=="\r\n"){
+                this.messageContent="";
                 return;
             }
+            this.messageContent=messageContent;
             if(this.socketClosed){
                 this.$message({
                     message: '连接关闭!请重新打开页面',
@@ -113,6 +113,7 @@ new Vue({
             mes.content = this.messageContent;
             //发送消息
             $.post("/2/message",mes,function(res){
+                _this.sendDisabled=false;
                 if(res.code!=200){
                     _this.$message({
                         message: res.msg,
@@ -132,29 +133,59 @@ new Vue({
                 _this.messageContent = "";
                 clearInterval(_this.timer);
                 _this.sendSound();
-                _this.sendDisabled=false;
             });
 
         },
-        OnClose() {
-            this.chatTitle="连接关闭!请重新打开页面";
-            $(".chatBox").append("<div class=\"chatTime\">"+this.chatTitle+"</div>");
+        //正在输入
+        inputNextText:function(){
+            if(this.socketClosed||!this.socket){
+                return;
+            }
+            //console.log(this.messageContent);
+            var message = {}
+            message.type = "inputing";
+            message.data = {
+                from : this.visitor.visitor_id,
+                to : this.visitor.to_id,
+                content:this.messageContent
+            };
+            this.socket.send(JSON.stringify(message));
+        },
+        OnClose:function() {
+            this.socketClosed=true;
+            // this.chatTitle="连接关闭!请重新打开页面";
+            // $(".chatBox").append("<div class=\"chatTime\">"+this.chatTitle+"</div>");
+            // this.scrollBottom();
         },
         //获取当前用户信息
-        getUserInfo(){
+        getUserInfo:function(){
             let obj=this.getCache("visitor");
             var visitor_id=""
             if(obj){
                 visitor_id=obj.visitor_id;
             }
                 let _this=this;
+                var extra=getQuery("extra");
+                if(extra!=""){
+                    var extraJson=JSON.parse(window.atob(extra))
+                    for(var key in extraJson){
+                        if(extraJson[key]==""){
+                            _this.$message({
+                                message: "用户扩展信息错误",
+                                type: 'error'
+                            });
+                            return;
+                        }
+                    }
+                }
                 //发送消息
-                $.post("/visitor_login",{visitor_id:visitor_id,refer:REFER,to_id:KEFU_ID,client_ip:'',},function(res){
+                $.post("/visitor_login",{visitor_id:visitor_id,refer:REFER,to_id:KEFU_ID,extra:extra},function(res){
                     if(res.code!=200){
                         _this.$message({
                             message: res.msg,
                             type: 'error'
                         });
+                        _this.sendDisabled=true;
                         return;
                     }
                     _this.visitor=res.result;
@@ -168,7 +199,7 @@ new Vue({
             // }
         },
         //获取信息列表
-        getMesssagesByVisitorId(){
+        getMesssagesByVisitorId:function(){
             let _this=this;
             $.ajax({
                 type:"get",
@@ -194,8 +225,8 @@ new Vue({
                             _this.msgList.push(content);
                             _this.scrollBottom();
                         }
-                        _this.$nextTick(() => {
-                            $(".chatBox").append("<div class=\"chatTime\">—— 以上是历史消息 ——</div>");
+                        _this.$nextTick(function(){
+                            $(".chatBox").append("<div class=\"chatTime\">"+GOFLY_LANG[LANG]['historymes']+"</div>");
                         });
                     }
                     if(data.code!=200){
@@ -209,7 +240,7 @@ new Vue({
         },
         //滚动到底部
         scrollBottom:function(){
-            this.$nextTick(() => {
+            this.$nextTick(function(){
                 //debugger;
                 $('body').scrollTop($("body")[0].scrollHeight);
             });
@@ -236,19 +267,25 @@ new Vue({
             let _this=this;
             $.get("/notice?kefu_id="+KEFU_ID,function(res) {
                 //debugger;
-                if (res.result != null) {
-                    let msg = res.result;
+                if (res.result.welcome != null) {
+                    let msg = res.result.welcome;
                     var len=msg.length;
                     var i=0;
                     if(len>0){
                         _this.timer=setInterval(function(){
-                            if(i>=len){
+                            if(i>=len||typeof msg[i]=="undefined"||msg[i]==null){
                                 clearInterval(_this.timer);
+                                return;
                             }
                             let content = msg[i];
+                            if(typeof content.content =="undefined"){
+                                return;
+                            }
                             content.content = replaceContent(content.content);
                             _this.msgList.push(content);
-                            _this.scrollBottom();
+                            if(_this.msgList.length>=4){
+                                _this.scrollBottom();
+                            }
                             if(i==0){
                                 _this.alertSound();
                             }
@@ -259,7 +296,7 @@ new Vue({
                 }
             });
         },
-        initCss(){
+        initCss:function(){
             var _this=this;
             $(function () {
                 //$(".chatContext").css("max-height",$(window).height());
@@ -280,10 +317,23 @@ new Vue({
                     }
                     return false;
                 });
+
+                var windheight = $(window).height();
+                $(window).resize(function(){
+                    var docheight = $(window).height();  /*唤起键盘时当前窗口高度*/
+                    console.log(docheight,windheight);
+                    //_this.scrollBottom();
+                    $('body').scrollTop(99999999);
+                    // if(docheight < windheight){            /*当唤起键盘高度小于未唤起键盘高度时执行*/
+                    //     $(".chatBoxSend").css("position","static");
+                    // }else{
+                    //     $(".chatBoxSend").css("position","fixed");
+                    // }
+                });
             });
         },
         //心跳
-        ping(){
+        ping:function(){
             let _this=this;
             let mes = {}
             mes.type = "ping";
@@ -292,10 +342,11 @@ new Vue({
                 if(_this.socket!=null){
                     _this.socket.send(JSON.stringify(mes));
                 }
-            },10000);
+            },60000);
         },
         //初始化
-        init(){
+        init:function(){
+            var _this=this;
             this.initCss();
             $("#app").click(function(){
                 clearTimeout(titleTimer);
@@ -307,14 +358,24 @@ new Vue({
 
                 $('.faceBox').hide();
             });
+            window.onfocus = function () {
+                _this.scrollBottom();
+                if(!_this.socketClosed){
+                    return;
+                }
+                _this.initConn();
+                _this.chatTitle="连接已重连";
+                $(".chatBox").append("<div class=\"chatTime\">"+_this.chatTitle+"</div>");
+                _this.scrollBottom();
+            }
         },
         //表情点击事件
-        faceIconClick(index){
+        faceIconClick:function(index){
             $('.faceBox').hide();
             this.messageContent+="face"+this.face[index].name;
         },
         //上传图片
-        uploadImg (url){
+        uploadImg:function (url){
             let _this=this;
             $('#uploadImg').after('<input type="file" accept="image/gif,image/jpeg,image/jpg,image/png" id="uploadImgFile" name="file" style="display:none" >');
             $("#uploadImgFile").click();
@@ -348,7 +409,7 @@ new Vue({
             });
         },
         //上传文件
-        uploadFile (url){
+        uploadFile:function (url){
             let _this=this;
             $('#uploadFile').after('<input type="file"  id="uploadRealFile" name="file2" style="display:none" >');
             $("#uploadRealFile").click();
@@ -384,7 +445,7 @@ new Vue({
             });
         },
         //粘贴上传图片
-        onPasteUpload(event){
+        onPasteUpload:function(event){
             let items = event.clipboardData && event.clipboardData.items;
             let file = null
             if (items && items.length) {
@@ -426,18 +487,28 @@ new Vue({
             });
         },
         //提示音
-        alertSound(){
+        alertSound:function(){
             var b = document.getElementById("chatMessageAudio");
-            var p = b.play();
-            p && p.then(function(){}).catch(function(e){});
+            if (b.canPlayType('audio/ogg; codecs="vorbis"')) {
+                b.type= 'audio/mpeg';
+                b.src= '/static/images/alert2.ogg';
+                var p = b.play();
+                p && p.then(function () {
+                }).catch(function (e) {
+                });
+            }
         },
-        sendSound(){
+        sendSound:function(){
             var b = document.getElementById("chatMessageSendAudio");
-            var p = b.play();
-            p && p.then(function(){}).catch(function(e){});
+            if (b.canPlayType('audio/ogg; codecs="vorbis"')) {
+                b.type= 'audio/mpeg';
+                b.src= '/static/images/sent.ogg';
+                var p = b.play();
+                p && p.then(function(){}).catch(function(e){});
+            }
         }
     },
-    mounted() {
+    mounted:function() {
         document.addEventListener('paste', this.onPasteUpload)
     },
     created: function () {

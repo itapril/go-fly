@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type Visitor struct {
 	Model
 	Name      string `json:"name"`
@@ -11,13 +13,14 @@ type Visitor struct {
 	Refer     string `json:"refer"`
 	City      string `json:"city"`
 	ClientIp  string `json:"client_ip"`
+	Extra     string `json:"extra"`
 }
 
-func CreateVisitor(name string, avator string, sourceIp string, toId string, visitorId string, refer string, city string, clientIp string) {
+func CreateVisitor(name, avator, sourceIp, toId, visitorId, refer, city, clientIp, extra string) {
 	old := FindVisitorByVistorId(visitorId)
 	if old.Name != "" {
 		//更新状态上线
-		UpdateVisitor(visitorId, 1, clientIp, sourceIp, refer)
+		UpdateVisitor(name, avator, visitorId, 1, clientIp, sourceIp, refer, extra)
 		return
 	}
 	v := &Visitor{
@@ -30,7 +33,9 @@ func CreateVisitor(name string, avator string, sourceIp string, toId string, vis
 		Refer:     refer,
 		City:      city,
 		ClientIp:  clientIp,
+		Extra:     extra,
 	}
+	v.UpdatedAt = time.Now()
 	DB.Create(v)
 }
 func FindVisitorByVistorId(visitorId string) Visitor {
@@ -65,13 +70,17 @@ func UpdateVisitorStatus(visitorId string, status uint) {
 	visitor := Visitor{}
 	DB.Model(&visitor).Where("visitor_id = ?", visitorId).Update("status", status)
 }
-func UpdateVisitor(visitorId string, status uint, clientIp string, sourceIp string, refer string) {
+func UpdateVisitor(name, avator, visitorId string, status uint, clientIp string, sourceIp string, refer, extra string) {
 	visitor := &Visitor{
 		Status:   status,
 		ClientIp: clientIp,
 		SourceIp: sourceIp,
 		Refer:    refer,
+		Extra:    extra,
+		Name:     name,
+		Avator:   avator,
 	}
+	visitor.UpdatedAt = time.Now()
 	DB.Model(visitor).Where("visitor_id = ?", visitorId).Update(visitor)
 }
 func UpdateVisitorKefu(visitorId string, kefuId string) {

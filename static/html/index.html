@@ -18,13 +18,17 @@
 
 
 
-<!--对接客服代码-->
+<!--对接客服代码,安装完成后更改成自己的域名或IP，下面js文件路径以及GOFLY_URL都要改-->
+<script src="https://gofly.sopans.com/static/js/gofly-front.js?v=1"></script>
 <script>
-    var GOFLY_URL="";
-    var GOFLY_KEFU_ID="kefu2";
-    var GOFLY_BTN_TEXT="{{.OnlineChat}}";
+    GOFLY.init({
+        GOFLY_URL:"https://gofly.sopans.com",
+        GOFLY_KEFU_ID: "kefu2",
+        GOFLY_BTN_TEXT: "{{.OnlineChat}}",
+        GOFLY_LANG:"{{.Lang}}",
+        GOFLY_AUTO_OPEN:true,
+    })
 </script>
-<script src="/static/js/gofly-front.js"></script>
 <!--//对接客服代码-->
 
 <!--自动弹代码-->
@@ -85,24 +89,34 @@
     </div>
 </div>
 <script>
-    var invite=false;
-
-setTimeout(function(){
-    if (invite) return;
-    $(".autoInvite").show();
-    invite=true;
-
-    $("#noAsk").click(function(){
-        $(".autoInvite").hide();
-        invite=true;
-    });
-    $(".nowAsk").click(function(){
-        $(".autoInvite").hide();
-        showKefu();
-        invite=true;
-    });
-},8000);
+//     var invite=false;
+//
+// setTimeout(function(){
+//     if (invite) return;
+//     $(".autoInvite").show();
+//     invite=true;
+//
+//     $("#noAsk").click(function(){
+//         $(".autoInvite").hide();
+//         invite=true;
+//     });
+//     $(".nowAsk").click(function(){
+//         $(".autoInvite").hide();
+//         GOFLY.showKefu();
+//         invite=true;
+//     });
+// },8000);
 </script>
 <!--自动弹代码-->
+
+<script>
+    var _hmt = _hmt || [];
+    (function() {
+        var hm = document.createElement("script");
+        hm.src = "https://hm.baidu.com/hm.js?82938760e00806c6c57adee91f39aa5e";
+        var s = document.getElementsByTagName("script")[0];
+        s.parentNode.insertBefore(hm, s);
+    })();
+</script>
 </body>
 </html>

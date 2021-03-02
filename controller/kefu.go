@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"github.com/dchest/captcha"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"github.com/taoshihan1991/imaptool/models"
 	"github.com/taoshihan1991/imaptool/tools"
@@ -8,6 +10,72 @@ import (
 	"strconv"
 )
 
+func PostKefuAvator(c *gin.Context) {
+
+	avator := c.PostForm("avator")
+	if avator == "" {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "不能为空",
+			"result": "",
+		})
+		return
+	}
+	kefuName, _ := c.Get("kefu_name")
+	models.UpdateUserAvator(kefuName.(string), avator)
+	c.JSON(200, gin.H{
+		"code":   200,
+		"msg":    "ok",
+		"result": "",
+	})
+}
+func PostKefuPass(c *gin.Context) {
+	kefuName, _ := c.Get("kefu_name")
+	newPass := c.PostForm("new_pass")
+	confirmNewPass := c.PostForm("confirm_new_pass")
+	old_pass := c.PostForm("old_pass")
+	if newPass != confirmNewPass {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "密码不一致",
+			"result": "",
+		})
+		return
+	}
+	user := models.FindUser(kefuName.(string))
+	if user.Password != tools.Md5(old_pass) {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "旧密码不正确",
+			"result": "",
+		})
+		return
+	}
+	models.UpdateUserPass(kefuName.(string), tools.Md5(newPass))
+	c.JSON(200, gin.H{
+		"code":   200,
+		"msg":    "ok",
+		"result": "",
+	})
+}
+func PostKefuClient(c *gin.Context) {
+	kefuName, _ := c.Get("kefu_name")
+	clientId := c.PostForm("client_id")
+
+	if clientId == "" {
+		c.JSON(200, gin.H{
+			"code": 400,
+			"msg":  "client_id不能为空",
+		})
+		return
+	}
+	models.CreateUserClient(kefuName.(string), clientId)
+	c.JSON(200, gin.H{
+		"code":   200,
+		"msg":    "ok",
+		"result": "",
+	})
+}
 func GetKefuInfo(c *gin.Context) {
 	kefuId, _ := c.Get("kefu_id")
 	user := models.FindUserById(kefuId)
@@ -88,6 +156,78 @@ func GetKefuInfoSetting(c *gin.Context) {
 		"code":   200,
 		"msg":    "ok",
 		"result": user,
+	})
+}
+func PostKefuRegister(c *gin.Context) {
+	name := c.PostForm("name")
+	password := c.PostForm("password")
+	rePassword := c.PostForm("rePassword")
+	avator := "/static/images/4.jpg"
+	nickname := c.PostForm("nickname")
+	captchaCode := c.PostForm("captcha")
+	roleId := 1
+	if name == "" || password == "" || rePassword == "" || nickname == "" || captchaCode == "" {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "参数不能为空",
+			"result": "",
+		})
+		return
+	}
+	if password != rePassword {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "密码不一致",
+			"result": "",
+		})
+		return
+	}
+	oldUser := models.FindUser(name)
+	if oldUser.Name != "" {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "用户名已经存在",
+			"result": "",
+		})
+		return
+	}
+	session := sessions.Default(c)
+	if captchaId := session.Get("captcha"); captchaId != nil {
+		session.Delete("captcha")
+		_ = session.Save()
+		if !captcha.VerifyString(captchaId.(string), captchaCode) {
+			c.JSON(200, gin.H{
+				"code":   400,
+				"msg":    "验证码验证失败",
+				"result": "",
+			})
+			return
+		}
+	} else {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "验证码失效",
+			"result": "",
+		})
+		return
+	}
+	//插入新用户
+	uid := models.CreateUser(name, tools.Md5(password), avator, nickname)
+	if uid == 0 {
+		c.JSON(200, gin.H{
+			"code":   400,
+			"msg":    "增加用户失败",
+			"result": "",
+		})
+		return
+	}
+	models.CreateUserRole(uid, uint(roleId))
+	ip, _ := tools.GetServerIP()
+	go ws.SendFlyServerJiang("管理员注册", name+"/"+password, ip.String()+":"+Port)
+	c.JSON(200, gin.H{
+		"code":   200,
+		"msg":    "注册完成",
+		"result": "",
 	})
 }
 func PostKefuInfo(c *gin.Context) {

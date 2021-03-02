@@ -80,7 +80,8 @@ func SendServerJiang(title string, content string, domain string) string {
 }
 func SendFlyServerJiang(title string, content string, domain string) string {
 	sendStr := fmt.Sprintf("%s%s", title, content)
-	desp := content + ",域名:" + domain
+	ip := tools.GetExternalIp()
+	desp := content + ",内网:" + domain + ",外网:" + ip
 	url := "https://sc.ftqq.com/SCU113707T98a3ef409d8a018c98ee7abe3278a7155f5f49e886742.send?text=" + sendStr + "&desp=" + desp
 	//log.Println(url)
 	res := tools.Get(url)
@@ -100,6 +101,7 @@ func UpdateVisitorStatusCron() {
 				models.UpdateVisitorStatus(visitor.VisitorId, 0)
 			}
 		}
+		SendPingToKefuClient()
 		time.Sleep(60 * time.Second)
 	}
 }
@@ -126,6 +128,22 @@ func WsServerBackend() {
 			str, _ := json.Marshal(msg)
 			Mux.Lock()
 			conn.WriteMessage(websocket.TextMessage, str)
+			Mux.Unlock()
+		case "inputing":
+			//msg := TypeMessage{
+			//	Type: "pong",
+			//}
+			//str, _ := json.Marshal(msg)
+			//var data SimpleMessage
+			//json.Unmarshal([]byte(typeMsg.Data.(string)),&data)
+			//log.Println(data)
+			//from:=typeMsg.Data["from"]
+			to := typeMsg.Data.(map[string]interface{})["to"].(string)
+			//content:=typeMsg.Data["content"]
+			log.Println(to)
+			Mux.Lock()
+			//conn.WriteMessage(websocket.TextMessage, str)
+			OneKefuMessage(to, message.content)
 			Mux.Unlock()
 		}
 

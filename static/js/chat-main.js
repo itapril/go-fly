@@ -15,6 +15,7 @@ var app=new Vue({
         currentGuest:"",
         msgList:[],
         chatTitle:"暂时未处理咨询",
+        chatInputing:"",
         kfConfig:{
             id : "kf_1",
             name : "客服丽丽",
@@ -30,6 +31,7 @@ var app=new Vue({
             source_ip:"",
             created_at:"",
         },
+        visitorExtra:[],
         visitors:[],
         visitorCount:0,
         visitorCurrentPage:1,
@@ -39,6 +41,9 @@ var app=new Vue({
         otherKefus:[],
         replyGroupDialog:false,
         replyContentDialog:false,
+        replySearch:"",
+        replySearchList:[],
+        replySearchListActive:[],
         groupName:"",
         groupId:"",
         replys:[],
@@ -67,7 +72,10 @@ var app=new Vue({
                 if(_this.socket!=null){
                     _this.socket.send(JSON.stringify(mes));
                 }
-            },5000)
+            },20000)
+            setInterval(function(){
+                _this.getOnlineVisitors();
+            },600000);
         },
         //初始化websocket
         initConn() {
@@ -82,25 +90,16 @@ var app=new Vue({
         OnMessage(e) {
             const redata = JSON.parse(e.data);
             switch (redata.type){
+                case "inputing":
+                    this.handleInputing(redata.data);
+                    //this.sendKefuOnline();
+                    break;
                 case "allUsers":
                     this.handleOnlineUsers(redata.data);
                     //this.sendKefuOnline();
                     break;
                 case "userOnline":
                     this.addOnlineUser(redata.data);
-                    //发送通知
-                    let _this=this;
-                    notify(redata.data.username, {
-                        body: "来了",
-                        icon: redata.data.avator
-                    }, function(notification) {
-                        //可直接打开通知notification相关联的tab窗口
-                        window.focus();
-                        $('#tab-first').trigger('click');
-                        notification.close();
-                        _this.talkTo(redata.data.uid,redata.data.username);
-                    });
-                    _this.alertSound();
 
                     break;
                 case "userOffline":
@@ -108,31 +107,16 @@ var app=new Vue({
                     //this.sendKefuOnline();
                     break;
                 case "notice":
-                    // if(!this.usersMap[redata.data.uid]){
-                    //     this.$notify({
-                    //         title: "通知",
-                    //         message: "新客户访问",
-                    //         type: 'success',
-                    //         duration: 0,
-                    //     });
-                    // }
-                    this.sendKefuOnline();
+                    //发送通知
+                    var _this=this;
+                    window.parent.postMessage({
+                        name:redata.data.username,
+                        body: redata.data.content,
+                        icon: redata.data.avator
+                    });
+                    _this.alertSound();
                     break;
             }
-            // if (redata.type == "notice") {
-            //     this.$notify({
-            //         title: "通知",
-            //         message: "新客户访问",
-            //         type: 'success',
-            //         duration: 0,
-            //     });
-            //发送给客户我在线
-            // let mes = {}
-            // mes.type = "kfConnect";
-            // kfConfig.guest_id=redata.data[0].uid;
-            // mes.data = kfConfig;
-            // this.socket.send(JSON.stringify(mes));
-            //}
 
             if (redata.type == "message") {
                 let msg = redata.data
@@ -156,17 +140,13 @@ var app=new Vue({
                 if(content.is_kefu){
                     return;
                 }
-                //发送通知
-                notify(msg.name, {
+                window.parent.postMessage({
+                    name:msg.name,
                     body: msg.content,
                     icon: msg.avator
-                }, function(notification) {
-                    //可直接打开通知notification相关联的tab窗口
-                    window.focus();
-                    notification.close();
-                    _this.talkTo(msg.id,msg.name);
                 });
                 _this.alertSound();
+                _this.chatInputing="";
             }
         },
         //接手客户
@@ -189,7 +169,12 @@ var app=new Vue({
         //发送给客户
         chatToUser() {
             this.messageContent=this.messageContent.trim("\r\n");
+            this.messageContent=this.messageContent.replace("\n","");
+            this.messageContent=this.messageContent.replace("\r\n","");
             if(this.messageContent==""||this.messageContent=="\r\n"||this.currentGuest==""){
+                return;
+            }
+            if(this.sendDisabled){
                 return;
             }
             this.sendDisabled=true;
@@ -201,7 +186,8 @@ var app=new Vue({
             mes.to_id = this.currentGuest;
             mes.content = this.messageContent;
             $.post("/2/message",mes,function(res){
-               if(res.code!=200){
+                _this.sendDisabled=false;
+                if(res.code!=200){
                     _this.$message({
                         message: data.msg,
                         type: 'error'
@@ -218,7 +204,6 @@ var app=new Vue({
             // content.is_kefu = true;
             // content.time = '';
             // this.msgList.push(content);
-            _this.sendDisabled=false;
             this.scrollBottom();
         },
         //处理当前在线用户列表
@@ -280,6 +265,15 @@ var app=new Vue({
                 }
             }
 
+        },
+        //处理正在输入
+        handleInputing:function (retData) {
+            if(retData.from==this.visitor.visitor_id){
+                this.chatInputing="正在输入："+retData.content+"...";
+                if(retData.content==""){
+                    this.chatInputing="";
+                }
+            }
         },
         //获取客服信息
         getKefuInfo(){
@@ -388,9 +382,23 @@ var app=new Vue({
                         // _this.visitor.client_ip=r.client_ip;
                         // _this.visitor.source_ip=r.source_ip;
                         _this.visitor.status=r.status==1?"在线":"离线";
+
                         //_this.visitor.visitor_id=r.visitor_id;
                         _this.chatTitle="#"+r.id+"|"+r.name;
                         _this.chatTitleType="success";
+                        _this.visitorExtra=[];
+                        if(r.extra!=""){
+                            var extra=JSON.parse(b64ToUtf8(r.extra));
+                            for(var key in extra){
+                                if(extra[key]==""){
+                                    extra[key]="无";
+                                }
+                                if(key=="visitorAvatar"||key=="visitorName") continue;
+                                var temp={key:key,val:extra[key]}
+                                _this.visitorExtra.push(temp);
+                            }
+                        }
+
                     }
                     if(data.code!=200){
                         _this.$message({
@@ -424,6 +432,9 @@ var app=new Vue({
         //处理tab切换
         handleTabClick(tab, event){
             let _this=this;
+            if(tab.name=="first"){
+                this.getOnlineVisitors();
+            }
             if(tab.name=="second"){
                 this.getVisitorPage(1);
             }
@@ -482,6 +493,7 @@ var app=new Vue({
                         }else{
                             $('.faceBox').show();
                         }
+                        return false;
                     });
                 });
             });
@@ -662,6 +674,20 @@ var app=new Vue({
                 _this.getReplys();
             });
         },
+        //搜索回复
+        searchReply(){
+            var _this=this;
+            _this.replySearchListActive=[];
+            if(this.replySearch==""){
+                _this.replySearchList=[];
+            }
+            this.sendAjax("/reply_search","post",{search:this.replySearch},function(result){
+                _this.replySearchList=result;
+                for (var i in result) {
+                    _this.replySearchListActive.push(result[i].group_id);
+                }
+            });
+        },
         //获取黑名单
         getIpblacks(){
             var _this=this;
@@ -676,6 +702,34 @@ var app=new Vue({
                 _this.sendAjax("/ipblacks","get",{},function(result){
                     _this.ipBlacks=result;
                 });
+            });
+        },
+        //划词搜索
+        selectText(){
+            var _this=this;
+            $('body').click(function(){
+                try{
+                    var selecter = window.getSelection().toString();
+                    if (selecter != null && selecter.trim() != ""){
+                        _this.replySearch=selecter.trim();
+                        _this.searchReply();
+                    }else{
+                        _this.replySearch="";
+                    }
+                } catch (err){
+                    var selecter = document.selection.createRange();
+                    var s = selecter.text;
+                    if (s != null && s.trim() != ""){
+                        _this.replySearch=s.trim();
+                        _this.searchReply();
+                    }else{
+                        _this.replySearch="";
+                    }
+                }
+                var status=$('.faceBox').css("display");
+                if(status=="block"){
+                    $('.faceBox').hide();
+                }
             });
         },
         sendAjax(url,method,params,callback){
@@ -722,6 +776,7 @@ var app=new Vue({
         this.getOnlineVisitors();
         this.getReplys();
         this.getIpblacks();
+        this.selectText();
         //心跳
         this.ping();
     }

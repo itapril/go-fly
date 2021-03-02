@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/jinzhu/gorm"
 	"github.com/taoshihan1991/imaptool/config"
+	"github.com/taoshihan1991/imaptool/tools"
+	"log"
 	"time"
 )
 
@@ -18,22 +20,23 @@ type Model struct {
 
 func init() {
 	mysql := config.CreateMysql()
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True&loc=Local", mysql.Username, mysql.Password, mysql.Server, mysql.Port, mysql.Database)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", mysql.Username, mysql.Password, mysql.Server, mysql.Port, mysql.Database)
 	var err error
 	DB, err = gorm.Open("mysql", dsn)
 	if err != nil {
+		log.Println(err)
 		panic("数据库连接失败!")
 	}
 	DB.SingularTable(true)
 	DB.LogMode(true)
-	//DB.SetLogger(tools.Logger())
+	DB.SetLogger(tools.Logger())
 	DB.DB().SetMaxIdleConns(10)
 	DB.DB().SetMaxOpenConns(100)
 
 	InitConfig()
 }
-func Execute(sql string) {
-	DB.Exec(sql)
+func Execute(sql string) error {
+	return DB.Exec(sql).Error
 }
 func CloseDB() {
 	defer DB.Close()
